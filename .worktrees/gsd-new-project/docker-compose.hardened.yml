@@ -1,0 +1,39 @@
+#
+# Hardened-ish overrides for otel-demo-platform infra.
+# This is an illustrative, more realistic configuration for workshops and demos.
+# It is NOT a full production hardening guide.
+#
+# Usage:
+#   # 1) Set non-demo credentials in your environment:
+#   #    export TEMPORAL_DB_USER=...
+#   #    export TEMPORAL_DB_PASSWORD=...
+#   #    export OTEL_LGTM_ADMIN_USER=...
+#   #    export OTEL_LGTM_ADMIN_PASSWORD=...
+#   #
+#   # 2) Start infra with overrides:
+#   #    docker compose -f docker-compose.yml -f docker-compose.hardened.yml up -d
+#
+
+services:
+  postgres:
+    environment:
+      # Require explicit, non-demo credentials in hardened mode.
+      POSTGRES_USER: ${TEMPORAL_DB_USER:?set TEMPORAL_DB_USER for hardened mode}
+      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD for hardened mode}
+      POSTGRES_DB: ${TEMPORAL_DB_NAME:-temporal}
+    # Do not expose Postgres directly to the host in hardened mode; access via Temporal only.
+    ports: []
+
+  temporal:
+    environment:
+      # Match the hardened Postgres credentials; require explicit values.
+      - POSTGRES_USER=${TEMPORAL_DB_USER:?set TEMPORAL_DB_USER for hardened mode}
+      - POSTGRES_PWD=${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD for hardened mode}
+      - POSTGRES_DB=${TEMPORAL_DB_NAME:-temporal}
+
+  otel-lgtm:
+    environment:
+      # Require non-default Grafana admin credentials in hardened mode.
+      - GF_SECURITY_ADMIN_USER=${OTEL_LGTM_ADMIN_USER:?set OTEL_LGTM_ADMIN_USER for hardened mode}
+      - GF_SECURITY_ADMIN_PASSWORD=${OTEL_LGTM_ADMIN_PASSWORD:?set OTEL_LGTM_ADMIN_PASSWORD for hardened mode}
+

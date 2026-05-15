@@ -1,0 +1,14 @@
+[
+  {
+    "description": "Simple greeting",
+    "body": { "message": "Hello" }
+  },
+  {
+    "description": "Question for the agent",
+    "body": { "message": "What is 2 + 2? Reply briefly." }
+  },
+  {
+    "description": "Empty message (edge case)",
+    "body": { "message": "" }
+  }
+]

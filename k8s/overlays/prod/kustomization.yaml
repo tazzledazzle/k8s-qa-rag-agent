@@ -1,0 +1,88 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rag-system
+
+bases:
+  - ../../base
+
+namePrefix: prod-
+
+commonLabels:
+  environment: prod
+
+# Portfolio prod image pins — replace newTag/newName with your registry + release tag
+# or digest before production (see docs/RELEASE.md). CI builds use github.sha on each push.
+images:
+  - name: qa-agent
+    newName: qa-agent
+    newTag: "0.1.0"
+  - name: retriever
+    newName: retriever
+    newTag: "0.1.0"
+  - name: indexer
+    newName: indexer
+    newTag: "0.1.0"
+  - name: git-watcher
+    newName: git-watcher
+    newTag: "0.1.0"
+  - name: qdrant/qdrant
+    newName: qdrant/qdrant
+    newTag: "v1.16.2"
+
+# Override replicas for prod
+replicas:
+  - name: prod-qa-agent-deployment
+    count: 4
+  - name: prod-retriever-deployment
+    count: 3
+  - name: prod-indexer-deployment
+    count: 2
+  - name: prod-git-watcher-deployment
+    count: 2
+  - name: prod-qdrant
+    count: 3
+
+# Add HPA for qa-agent and retriever
+resources:
+  - hpa-qa-agent.yaml
+  - hpa-retriever.yaml
+  - pod-disruption-budget.yaml
+
+# Increase resource limits for prod
+# Collector image tag is pinned in base `qa-agent-deployment.yaml` (`otel/opentelemetry-collector-k8s:0.99.0`).
+patchesJson6902:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: prod-qa-agent-deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 1000m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 4000m
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: prod-retriever-deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 500m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: 2000m
+  # Require webhook secret in prod (no silent optional mount).
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: prod-git-watcher-deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/2/valueFrom/secretKeyRef/optional
+        value: false

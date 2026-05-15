@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qa-agent-deployment
+  labels:
+    app: qa-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qa-agent
+  template:
+    metadata:
+      labels:
+        app: qa-agent
+    spec:
+      volumes:
+        - name: otel-config
+          configMap:
+            name: otel-collector-config
+            items:
+              - key: otel-collector-config.yaml
+                path: config.yaml
+      containers:
+        - name: qa-agent
+          image: qa-agent:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8002
+          env:
+            - name: RETRIEVER_HOST
+              value: "retriever-service"
+            - name: RETRIEVER_PORT
+              value: "8001"
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: llm-secrets
+                  key: openai-api-key
+                  optional: true
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://127.0.0.1:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "qa-agent"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+        - name: otel-collector-sidecar
+          image: otel/opentelemetry-collector-k8s:0.99.0
+          imagePullPolicy: IfNotPresent
+          args: ["--config=/etc/otelcol/config.yaml"]
+          ports:
+            - name: otlp
+              containerPort: 4317
+          volumeMounts:
+            - name: otel-config
+              mountPath: /etc/otelcol
+              readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qa-agent-service
+  labels:
+    app: qa-agent
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8002
+      targetPort: 8002
+  selector:
+    app: qa-agent

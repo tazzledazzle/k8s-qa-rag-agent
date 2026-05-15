@@ -1,0 +1,2 @@
+# Runtime dependencies are declared in the repository root pyproject.toml.
+# Install with: pip install -e ".[dev]" from the k8s-qa-rag-agent project root.

@@ -1,0 +1,19 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: prod-qa-agent-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: qa-agent
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: prod-retriever-pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: retriever

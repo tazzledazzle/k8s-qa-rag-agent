@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: indexer-cronjob
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: indexer
+            image: indexer:latest
+            imagePullPolicy: IfNotPresent
+            command:
+            - python
+            - -m
+            - services.indexer.batch_index
+            env:
+            - name: QDRANT_HOST
+              value: "qdrant-service"
+            - name: QDRANT_PORT
+              value: "6333"
+            - name: ELASTICSEARCH_URL
+              value: "http://elasticsearch:9200"
+            - name: INDEXER_REPO_CACHE
+              value: "/app/repos"
+            envFrom:
+            - configMapRef:
+                name: indexer-batch-config
+            volumeMounts:
+            - name: repo-cache
+              mountPath: /app/repos
+            resources:
+              requests:
+                cpu: 2000m
+                memory: 4Gi
+              limits:
+                cpu: 4000m
+                memory: 8Gi
+          volumes:
+          - name: repo-cache
+            emptyDir:
+              sizeLimit: 20Gi

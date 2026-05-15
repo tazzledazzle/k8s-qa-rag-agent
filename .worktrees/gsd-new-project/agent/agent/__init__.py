@@ -1,0 +1,1 @@
+# Agent service: LangChain + Ollama

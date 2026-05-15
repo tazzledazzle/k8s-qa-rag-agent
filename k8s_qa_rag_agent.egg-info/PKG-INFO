@@ -1,0 +1,764 @@
+Metadata-Version: 2.4
+Name: k8s-qa-rag-agent
+Version: 0.1.0
+Summary: Kubernetes-native RAG system for live codebase Q&A
+Author-email: Terence Schumacher <terenceschumacher@gmail.com>
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.104.0
+Requires-Dist: uvicorn[standard]>=0.24.0
+Requires-Dist: pydantic>=2.0
+Requires-Dist: pydantic-settings>=2.0
+Requires-Dist: langchain>=0.1.0
+Requires-Dist: langchain-openai>=0.1.0
+Requires-Dist: langgraph>=0.0.20
+Requires-Dist: openai>=1.0.0
+Requires-Dist: sentence-transformers>=2.2.0
+Requires-Dist: torch>=2.0
+Requires-Dist: qdrant-client>=1.7.0
+Requires-Dist: elasticsearch>=8.10.0
+Requires-Dist: redis>=5.0.0
+Requires-Dist: tree-sitter>=0.20.0
+Requires-Dist: tiktoken>=0.5.0
+Requires-Dist: gitpython>=3.1.0
+Requires-Dist: httpx>=0.25.0
+Requires-Dist: aiofiles>=23.0.0
+Requires-Dist: opentelemetry-api>=1.20.0
+Requires-Dist: opentelemetry-sdk>=1.20.0
+Requires-Dist: opentelemetry-exporter-otlp>=0.41b0
+Requires-Dist: opentelemetry-instrumentation-fastapi>=0.41b0
+Requires-Dist: opentelemetry-instrumentation-redis>=0.41b0
+Requires-Dist: python-json-logger>=2.0.0
+Requires-Dist: prometheus-client>=0.19.0
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: requests>=2.31.0
+Requires-Dist: rapidfuzz>=3.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.21.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.1.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: isort>=5.12.0; extra == "dev"
+Requires-Dist: flake8>=6.1.0; extra == "dev"
+Requires-Dist: mypy>=1.5.0; extra == "dev"
+Requires-Dist: ruff>=0.1.0; extra == "dev"
+
+# Kubernetes Codebase Q&A — Technical Design
+
+### Problem & Goals
+
+You want a system that lets engineers ask natural-language questions about *live code* and *runbooks*, with answers grounded in what's actually in the repo right now — not a stale snapshot. The system should:
+
+- Answer "what does this service do / how does X work" using real code as source of truth
+- Answer "how do I respond to alert Y" from runbook content
+- Re-index automatically on every push, with sub-minute staleness
+- Run entirely on Kubernetes with sane operational properties (OTEL traces, HPA, GitOps deploys)
+
+---
+
+### System Decomposition
+
+**Ingress:** Kong or Envoy routes `/query`, `/runbook`, and `/admin/reindex` to the appropriate agent pool.
+
+**Agent tier (LangGraph):** Three agent deployments. The Q&A Agent and Runbook Agent are stateless HTTP servers (FastAPI) with a LangGraph ReAct loop. The Indexer Agent runs as a CronJob and is also triggered via webhook from the Git Watcher.
+
+**Retrieval layer:** Hybrid BM25 + dense vector search, reranked by a cross-encoder, assembled into a context window before LLM call. Redis caches repeated queries (TTL 10 min).
+
+**Storage tier:**
+- Qdrant as the vector store (StatefulSet with PVC)
+- Elasticsearch or Typesense for BM25
+- Postgres for chunk metadata, ACLs, and file-path-to-chunk index
+- S3-compatible store for raw and parsed chunk blobs
+
+**Source connectors:** Git (GitHub/GitLab webhooks), Confluence/Markdown runbooks, Jira issue context.
+
+---
+
+### Step-by-Step: Complete Implementation
+
+#### Step 1 — Project Layout
+
+```
+k8s-codebase-qa/
+├── services/
+│   ├── qa_agent/          # Python FastAPI + LangGraph
+│   ├── runbook-agent/     # Python FastAPI + LangGraph
+│   ├── indexer/           # Python — chunker, embedder, ingest
+│   ├── retriever/         # Python FastAPI — hybrid search
+│   └── git-watcher/       # Kotlin Ktor — webhook receiver
+├── k8s/
+│   ├── base/              # Kustomize base
+│   └── overlays/          # dev / staging / prod
+├── helm/                  # Qdrant, ES, Redis subcharts
+└── infra/
+    └── terraform/         # VPC, EKS, S3, IAM
+```
+
+#### Step 2 — Indexer Service (Python)
+
+```python
+# services/indexer/indexer.py
+import os, hashlib, ast, pathlib
+from dataclasses import dataclass
+from typing import Generator
+import httpx
+from sentence_transformers import SentenceTransformer
+from qdrant_client import QdrantClient, models
+from qdrant_client.http.models import PointStruct
+
+QDRANT_URL   = os.environ["QDRANT_URL"]
+COLLECTION   = os.environ.get("QDRANT_COLLECTION", "codebase")
+EMBED_MODEL  = os.environ.get("EMBED_MODEL", "BAAI/bge-base-en-v1.5")
+CHUNK_TOKENS = int(os.environ.get("CHUNK_TOKENS", "512"))
+CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "64"))
+
+@dataclass
+class Chunk:
+    text: str
+    file_path: str
+    start_line: int
+    end_line: int
+    chunk_type: str   # "function" | "class" | "block" | "prose"
+    language: str
+
+model  = SentenceTransformer(EMBED_MODEL)
+client = QdrantClient(url=QDRANT_URL)
+
+def ensure_collection():
+    existing = {c.name for c in client.get_collections().collections}
+    if COLLECTION not in existing:
+        client.create_collection(
+            collection_name=COLLECTION,
+            vectors_config=models.VectorParams(
+                size=model.get_sentence_embedding_dimension(),
+                distance=models.Distance.COSINE,
+            ),
+        )
+
+def ast_chunks_python(source: str, file_path: str) -> Generator[Chunk, None, None]:
+    """Emit one chunk per top-level function/class, fall back to sliding window."""
+    try:
+        tree = ast.parse(source)
+        lines = source.splitlines()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                start = node.lineno - 1
+                end   = node.end_lineno
+                text  = "\n".join(lines[start:end])
+                kind  = "function" if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else "class"
+                yield Chunk(text=text, file_path=file_path,
+                            start_line=start, end_line=end,
+                            chunk_type=kind, language="python")
+    except SyntaxError:
+        yield from sliding_window_chunks(source, file_path, "python")
+
+def sliding_window_chunks(source: str, file_path: str, lang: str) -> Generator[Chunk, None, None]:
+    words = source.split()
+    step  = CHUNK_TOKENS - CHUNK_OVERLAP
+    for i in range(0, len(words), step):
+        text = " ".join(words[i:i + CHUNK_TOKENS])
+        yield Chunk(text=text, file_path=file_path,
+                    start_line=0, end_line=0,
+                    chunk_type="block", language=lang)
+
+def chunk_file(path: pathlib.Path) -> list[Chunk]:
+    text = path.read_text(errors="replace")
+    suffix = path.suffix.lower()
+    if suffix == ".py":
+        return list(ast_chunks_python(text, str(path)))
+    elif suffix in (".md", ".mdx", ".rst", ".txt"):
+        return list(sliding_window_chunks(text, str(path), "prose"))
+    elif suffix in (".kt", ".java", ".go", ".ts", ".js"):
+        return list(sliding_window_chunks(text, str(path), suffix.lstrip(".")))
+    return []
+
+def upsert_chunks(chunks: list[Chunk]):
+    if not chunks:
+        return
+    texts = [c.text for c in chunks]
+    vectors = model.encode(texts, batch_size=32, show_progress_bar=False).tolist()
+    points = [
+        PointStruct(
+            id=int(hashlib.md5(f"{c.file_path}:{c.start_line}".encode()).hexdigest(), 16) % (2**63),
+            vector=v,
+            payload={
+                "text": c.text,
+                "file_path": c.file_path,
+                "start_line": c.start_line,
+                "end_line": c.end_line,
+                "chunk_type": c.chunk_type,
+                "language": c.language,
+            },
+        )
+        for c, v in zip(chunks, vectors)
+    ]
+    client.upsert(collection_name=COLLECTION, points=points)
+
+def index_repo(repo_root: str):
+    ensure_collection()
+    root = pathlib.Path(repo_root)
+    EXTENSIONS = {".py", ".kt", ".java", ".go", ".ts", ".js", ".md", ".mdx", ".rst"}
+    for p in root.rglob("*"):
+        if p.suffix in EXTENSIONS and ".git" not in p.parts:
+            chunks = chunk_file(p)
+            upsert_chunks(chunks)
+            print(f"indexed {p} → {len(chunks)} chunks")
+```
+
+#### Step 3 — Retriever Service (Python FastAPI)
+
+```python
+# services/retriever/main.py
+import os
+from fastapi import FastAPI
+from pydantic import BaseModel
+from sentence_transformers import SentenceTransformer, CrossEncoder
+from qdrant_client import QdrantClient
+from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+app = FastAPI()
+QDRANT_URL  = os.environ["QDRANT_URL"]
+COLLECTION  = os.environ.get("QDRANT_COLLECTION", "codebase")
+TOP_K       = int(os.environ.get("TOP_K", "20"))
+RERANK_TOP  = int(os.environ.get("RERANK_TOP", "6"))
+
+embed_model   = SentenceTransformer(os.environ.get("EMBED_MODEL", "BAAI/bge-base-en-v1.5"))
+rerank_model  = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+qdrant_client = QdrantClient(url=QDRANT_URL)
+
+class RetrieveRequest(BaseModel):
+    query: str
+    language_filter: str | None = None
+    top_k: int = RERANK_TOP
+
+class ChunkResult(BaseModel):
+    text: str
+    file_path: str
+    start_line: int
+    score: float
+
+@app.post("/retrieve", response_model=list[ChunkResult])
+async def retrieve(req: RetrieveRequest):
+    query_vec = embed_model.encode(req.query).tolist()
+
+    filters = None
+    if req.language_filter:
+        filters = Filter(must=[
+            FieldCondition(key="language", match=MatchValue(value=req.language_filter))
+        ])
+
+    hits = qdrant_client.search(
+        collection_name=COLLECTION,
+        query_vector=query_vec,
+        limit=TOP_K,
+        query_filter=filters,
+        with_payload=True,
+    )
+
+    # Rerank
+    pairs  = [(req.query, h.payload["text"]) for h in hits]
+    scores = rerank_model.predict(pairs).tolist()
+    ranked = sorted(zip(hits, scores), key=lambda x: x[1], reverse=True)
+
+    return [
+        ChunkResult(
+            text=h.payload["text"],
+            file_path=h.payload["file_path"],
+            start_line=h.payload.get("start_line", 0),
+            score=round(s, 4),
+        )
+        for h, s in ranked[:req.top_k]
+    ]
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+```
+
+#### Step 4 — Q&A Agent with LangGraph (Python)
+
+```python
+# services/qa_agent/agent.py
+import os, httpx
+from langchain_anthropic import ChatAnthropic
+from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolNode
+from langchain_core.tools import tool
+from pydantic import BaseModel
+from typing import TypedDict, Annotated
+import operator
+
+RETRIEVER_URL = os.environ["RETRIEVER_URL"]
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+
+llm = ChatAnthropic(model="claude-sonnet-4-20250514", api_key=ANTHROPIC_API_KEY)
+
+@tool
+def search_codebase(query: str, language: str | None = None) -> str:
+    """Search the indexed codebase for relevant code chunks."""
+    resp = httpx.post(f"{RETRIEVER_URL}/retrieve",
+                      json={"query": query, "language_filter": language, "top_k": 6},
+                      timeout=15)
+    resp.raise_for_status()
+    chunks = resp.json()
+    if not chunks:
+        return "No relevant code found."
+    parts = []
+    for c in chunks:
+        parts.append(f"### {c['file_path']} (line {c['start_line']}, score {c['score']})\n```\n{c['text']}\n```")
+    return "\n\n".join(parts)
+
+@tool
+def search_runbooks(query: str) -> str:
+    """Search indexed runbooks for operational procedures."""
+    resp = httpx.post(f"{RETRIEVER_URL}/retrieve",
+                      json={"query": query, "language_filter": "prose", "top_k": 4},
+                      timeout=15)
+    resp.raise_for_status()
+    chunks = resp.json()
+    if not chunks:
+        return "No relevant runbook content found."
+    return "\n\n".join(f"**{c['file_path']}** (score {c['score']})\n{c['text']}" for c in chunks)
+
+tools = [search_codebase, search_runbooks]
+llm_with_tools = llm.bind_tools(tools)
+
+SYSTEM_PROMPT = """You are a codebase Q&A assistant with live access to the repository.
+Answer questions using the search_codebase and search_runbooks tools.
+Always cite the file path and line numbers. If you can't find relevant code, say so.
+Keep answers focused and accurate."""
+
+class AgentState(TypedDict):
+    messages: Annotated[list, operator.add]
+
+def call_llm(state: AgentState):
+    from langchain_core.messages import SystemMessage
+    messages = state["messages"]
+    if not any(isinstance(m, type(SystemMessage)) for m in messages):
+        messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+    response = llm_with_tools.invoke(messages)
+    return {"messages": [response]}
+
+def should_continue(state: AgentState) -> str:
+    last = state["messages"][-1]
+    if hasattr(last, "tool_calls") and last.tool_calls:
+        return "tools"
+    return END
+
+tool_node = ToolNode(tools)
+
+graph = StateGraph(AgentState)
+graph.add_node("llm", call_llm)
+graph.add_node("tools", tool_node)
+graph.set_entry_point("llm")
+graph.add_conditional_edges("llm", should_continue, {"tools": "tools", END: END})
+graph.add_edge("tools", "llm")
+
+qa_graph = graph.compile()
+```
+
+```python
+# services/qa_agent/main.py
+from fastapi import FastAPI
+from pydantic import BaseModel
+from langchain_core.messages import HumanMessage
+from agent import qa_graph
+
+app = FastAPI()
+
+class QueryRequest(BaseModel):
+    question: str
+    session_id: str | None = None
+
+@app.post("/query")
+async def query(req: QueryRequest):
+    result = qa_graph.invoke({"messages": [HumanMessage(content=req.question)]})
+    last_message = result["messages"][-1]
+    return {"answer": last_message.content, "session_id": req.session_id}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+```
+
+#### Step 5 — Git Watcher (Kotlin / Ktor)
+
+```kotlin
+// services/git-watcher/src/main/kotlin/GitWatcherApp.kt
+package com.example.gitwatcher
+
+import io.ktor.server.application.*
+import io.ktor.server.engine.*
+import io.ktor.server.netty.*
+import io.ktor.server.request.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
+import io.ktor.client.*
+import io.ktor.client.engine.cio.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
+import kotlinx.serialization.*
+import kotlinx.serialization.json.*
+import org.slf4j.LoggerFactory
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
+import java.security.MessageDigest
+
+val logger = LoggerFactory.getLogger("GitWatcher")
+val httpClient = HttpClient(CIO)
+
+@Serializable
+data class IndexRequest(val repoUrl: String, val branch: String, val commitSha: String)
+
+fun verifyGitHubSignature(payload: ByteArray, signature: String, secret: String): Boolean {
+    val mac = Mac.getInstance("HmacSHA256")
+    mac.init(SecretKeySpec(secret.toByteArray(), "HmacSHA256"))
+    val expected = "sha256=" + mac.doFinal(payload).joinToString("") { "%02x".format(it) }
+    return MessageDigest.isEqual(expected.toByteArray(), signature.toByteArray())
+}
+
+fun main() {
+    val webhookSecret  = System.getenv("WEBHOOK_SECRET") ?: error("WEBHOOK_SECRET required")
+    val indexerUrl     = System.getenv("INDEXER_URL")    ?: error("INDEXER_URL required")
+
+    embeddedServer(Netty, port = 8080) {
+        routing {
+            post("/webhook/github") {
+                val signature = call.request.header("X-Hub-Signature-256") ?: run {
+                    call.respond(HttpStatusCode.Unauthorized, "Missing signature"); return@post
+                }
+                val rawBody = call.receiveChannel().toByteArray()
+                if (!verifyGitHubSignature(rawBody, signature, webhookSecret)) {
+                    call.respond(HttpStatusCode.Unauthorized, "Bad signature"); return@post
+                }
+                val event   = call.request.header("X-GitHub-Event") ?: ""
+                val payload = Json.parseToJsonElement(String(rawBody)).jsonObject
+                if (event == "push") {
+                    val repoUrl   = payload["repository"]?.jsonObject?.get("clone_url")?.jsonPrimitive?.content ?: ""
+                    val branch    = payload["ref"]?.jsonPrimitive?.content?.removePrefix("refs/heads/") ?: "main"
+                    val commitSha = payload["after"]?.jsonPrimitive?.content ?: ""
+                    logger.info("Push event: $repoUrl @ $commitSha on $branch")
+                    val indexReq = IndexRequest(repoUrl, branch, commitSha)
+                    try {
+                        httpClient.post("$indexerUrl/reindex") {
+                            contentType(ContentType.Application.Json)
+                            setBody(Json.encodeToString(indexReq))
+                        }
+                    } catch (e: Exception) {
+                        logger.error("Failed to trigger indexer: ${e.message}")
+                    }
+                }
+                call.respond(HttpStatusCode.OK, "ok")
+            }
+            get("/health") { call.respond(mapOf("status" to "ok")) }
+        }
+    }.start(wait = true)
+}
+```
+
+#### Step 6 — Kubernetes Manifests
+
+```yaml
+# k8s/base/qa-agent-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qa-agent
+  labels:
+    app: qa-agent
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: qa-agent
+  template:
+    metadata:
+      labels:
+        app: qa-agent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+        - name: qa-agent
+          image: your-registry/qa-agent:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: RETRIEVER_URL
+              value: "http://retriever-svc:8080"
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: llm-credentials
+                  key: anthropic-api-key
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+        # OpenTelemetry sidecar
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.99.0
+          args: ["--config=/etc/otel/config.yaml"]
+          volumeMounts:
+            - name: otel-config
+              mountPath: /etc/otel
+      volumes:
+        - name: otel-config
+          configMap:
+            name: otel-collector-config
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: qa-agent-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: qa-agent
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+```
+
+```yaml
+# k8s/base/indexer-cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: indexer-full-sync
+spec:
+  schedule: "0 * * * *"   # full re-index every hour
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: indexer
+              image: your-registry/indexer:latest
+              command: ["python", "-m", "indexer", "--full-sync"]
+              env:
+                - name: QDRANT_URL
+                  value: "http://qdrant-svc:6333"
+                - name: REPO_PATH
+                  value: "/repos"
+                - name: GIT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: git-credentials
+                      key: token
+              volumeMounts:
+                - name: repo-cache
+                  mountPath: /repos
+          volumes:
+            - name: repo-cache
+              persistentVolumeClaim:
+                claimName: repo-cache-pvc
+---
+# Also expose the indexer as a Deployment for on-demand webhook triggers
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: indexer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: indexer
+  template:
+    metadata:
+      labels:
+        app: indexer
+    spec:
+      containers:
+        - name: indexer
+          image: your-registry/indexer:latest
+          command: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8080"]
+          env:
+            - name: QDRANT_URL
+              value: "http://qdrant-svc:6333"
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"   # embedding model in memory
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+```
+
+```yaml
+# k8s/base/qdrant-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+spec:
+  serviceName: qdrant
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+    spec:
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.9.1
+          ports:
+            - containerPort: 6333
+            - containerPort: 6334
+          volumeMounts:
+            - name: qdrant-storage
+              mountPath: /qdrant/storage
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "8Gi"
+  volumeClaimTemplates:
+    - metadata:
+        name: qdrant-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 50Gi
+```
+
+#### Step 7 — OpenTelemetry Config
+
+```yaml
+# k8s/base/otel-collector-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch:
+        timeout: 1s
+      resource:
+        attributes:
+          - key: service.namespace
+            value: codebase-qa
+            action: insert
+    exporters:
+      otlp/tempo:
+        endpoint: "http://tempo-svc:4317"
+        tls:
+          insecure: true
+      prometheus:
+        endpoint: "0.0.0.0:8889"
+      loki:
+        endpoint: "http://loki-svc:3100/loki/api/v1/push"
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch, resource]
+          exporters: [otlp/tempo]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [prometheus]
+        logs:
+          receivers: [otlp]
+          processors: [batch, resource]
+          exporters: [loki]
+```
+
+#### Step 8 — Kustomize Overlay (prod)
+
+```yaml
+# k8s/overlays/prod/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+namespace: codebase-qa-prod
+images:
+  - name: your-registry/qa-agent
+    newTag: "v1.2.0"
+  - name: your-registry/indexer
+    newTag: "v1.2.0"
+patches:
+  - path: replicas-patch.yaml
+```
+
+```yaml
+# k8s/overlays/prod/replicas-patch.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qa-agent
+spec:
+  replicas: 4
+```
+
+---
+
+### Key Trade-offs
+
+| Decision | Chosen | Alternative | Why |
+|---|---|---|---|
+| Vector store | Qdrant | Weaviate / Pinecone | Kubernetes-native StatefulSet, no SaaS dependency |
+| BM25 | Elasticsearch | Typesense / Manticore | Team familiarity, better k8s operators |
+| Chunking | AST-aware (per function/class) | Fixed-size sliding window | Better semantic boundaries for code; fewer hallucinated context mixes |
+| Reranker | cross-encoder (local) | Cohere Rerank API | No egress cost, fits on CPU |
+| Agent framework | LangGraph | LlamaIndex Agents | Native graph control flow, HITL gates, easier cycle handling |
+| Embedding model | BAAI/bge-base-en-v1.5 | OpenAI text-embedding-3-small | Free, self-hosted, good code retrieval quality |
+
+---
+
+### Capacity Sketch
+
+With ~500k LOC and 512-token chunks, expect roughly 1M chunks. At 768-dim float32 that's ~3 GB of raw vectors — fits comfortably in a single Qdrant instance with 8 GB RAM. Embedding throughput on a 4-core pod with bge-base is ~200 chunks/sec, so a full re-index of 1M chunks takes ~85 minutes — acceptable for hourly CronJob. Delta indexing via webhook gets new commits indexed in under 60 seconds.
+
+---
+
+### Operational Concerns
+
+**Staleness:** webhook-driven delta index keeps Qdrant current within ~30s of a push. The hourly CronJob catches anything the webhook missed (e.g., bulk imports, branch force-pushes).
+
+**Security:** GitHub webhook signature verification (HMAC-SHA256) is in the Git Watcher. Qdrant and Elasticsearch are internal-only (no external Service). LLM API key is a Kubernetes Secret, not an env literal.
+
+**Rollback:** Qdrant PVC is backed up nightly via a Velero snapshot. Collection aliases allow zero-downtime re-index: build a new collection, flip the alias, drop the old one.
+
+**Go gap note:** The Git Watcher is in Kotlin here — if you want to close the Go gap for your job search, that's a clean swap (net/http + gorilla/mux webhook handler, same HMAC-SHA256 logic).

@@ -1,0 +1,86 @@
+{
+  "doc_path": "README.md",
+  "claims_checked": 19,
+  "claims_passed": 6,
+  "claims_failed": 13,
+  "failures": [
+    {
+      "line": 37,
+      "claim": "k8s-codebase-qa/ project root and runbook-agent service",
+      "expected": "layout matches repository",
+      "actual": "repo is k8s-qa-rag-agent; no services/runbook-agent/"
+    },
+    {
+      "line": 47,
+      "claim": "helm/ directory",
+      "expected": "file exists",
+      "actual": "no helm/ in repository"
+    },
+    {
+      "line": 49,
+      "claim": "infra/terraform/",
+      "expected": "file exists",
+      "actual": "no infra/terraform in repository"
+    },
+    {
+      "line": 55,
+      "claim": "services/indexer/indexer.py",
+      "expected": "file exists",
+      "actual": "file not found; indexer uses services/indexer/main.py, chunker.py, etc."
+    },
+    {
+      "line": 342,
+      "claim": "services/git-watcher/src/main/kotlin/GitWatcherApp.kt",
+      "expected": "file exists at path",
+      "actual": "file at services/git-watcher/src/main/kotlin/com/k8sqarag/gitwatcher/GitWatcherApp.kt; package com.k8sqarag.gitwatcher not com.example"
+    },
+    {
+      "line": 195,
+      "claim": "POST /retrieve route in retriever",
+      "expected": "route definition in codebase",
+      "actual": "retriever exposes POST /search (services/retriever/main.py)"
+    },
+    {
+      "line": 328,
+      "claim": "POST /query on qa agent",
+      "expected": "route definition in codebase",
+      "actual": "qa_agent exposes POST /ask (services/qa_agent/main.py)"
+    },
+    {
+      "line": 399,
+      "claim": "POST .../reindex on indexer from git watcher",
+      "expected": "route definition in codebase",
+      "actual": "indexer exposes POST /index; IndexerClient posts to /index"
+    },
+    {
+      "line": 382,
+      "claim": "POST /webhook/github on git watcher",
+      "expected": "route definition in codebase",
+      "actual": "git-watcher exposes POST /webhook only"
+    },
+    {
+      "line": 519,
+      "claim": "python -m indexer --full-sync in CronJob",
+      "expected": "script or module exists",
+      "actual": "k8s uses python -m services.indexer.batch_index but services/indexer/batch_index.py is missing"
+    },
+    {
+      "line": 556,
+      "claim": "uvicorn api:app for indexer Deployment",
+      "expected": "matches Dockerfile/CMD",
+      "actual": "CMD is uvicorn services.indexer.main:app (services/indexer/Dockerfile)"
+    },
+    {
+      "line": 615,
+      "claim": "k8s/base/otel-collector-configmap.yaml",
+      "expected": "file exists",
+      "actual": "file not found; base uses k8s/base/configmap-otel.yaml"
+    },
+    {
+      "line": 681,
+      "claim": "k8s/overlays/prod/replicas-patch.yaml",
+      "expected": "file exists",
+      "actual": "file not found; prod uses replicas in kustomization.yaml and patchesJson6902"
+    }
+  ]
+}

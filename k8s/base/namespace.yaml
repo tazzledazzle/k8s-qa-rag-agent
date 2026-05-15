@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rag-system
+  labels:
+    name: rag-system
+    app.kubernetes.io/part-of: k8s-qa-rag-agent

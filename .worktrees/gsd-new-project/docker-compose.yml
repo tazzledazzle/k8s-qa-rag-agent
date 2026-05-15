@@ -1,0 +1,51 @@
+# OpenTelemetry Demo Platform — Infrastructure
+# temporalio/auto-setup + Grafana otel-lgtm
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${TEMPORAL_DB_USER:-temporal_demo}
+      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:-temporal_demo}
+      POSTGRES_DB: ${TEMPORAL_DB_NAME:-temporal}
+    ports:
+      - "5432:5432"
+    volumes:
+      - temporal_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TEMPORAL_DB_USER:-temporal_demo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=${TEMPORAL_DB_USER:-temporal_demo}
+      - POSTGRES_PWD=${TEMPORAL_DB_PASSWORD:-temporal_demo}
+      - POSTGRES_DB=${TEMPORAL_DB_NAME:-temporal}
+      - POSTGRES_SEEDS=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    ports:
+      - "3000:3000"   # Grafana
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    environment:
+      - ENABLE_LOGS_ALL=false
+      - GF_SECURITY_ADMIN_USER=${OTEL_LGTM_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${OTEL_LGTM_ADMIN_PASSWORD:-admin}
+    volumes:
+      - otel_lgtm_data:/data
+
+volumes:
+  temporal_postgres_data:
+  otel_lgtm_data:

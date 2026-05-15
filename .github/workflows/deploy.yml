@@ -1,0 +1,51 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - 'k8s/**'
+      - 'pyproject.toml'
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Kustomize
+      run: |
+        curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+        sudo mv kustomize /usr/local/bin/
+    - name: Prepare manifests
+      run: |
+        kustomize build k8s/overlays/staging > /tmp/manifests-staging.yaml
+    - name: Deploy to staging
+      env:
+        KUBECONFIG: ${{ secrets.KUBECONFIG_STAGING }}
+      run: |
+        echo "$KUBECONFIG" > /tmp/kubeconfig
+        kubectl apply -f /tmp/manifests-staging.yaml --kubeconfig=/tmp/kubeconfig
+        rm -f /tmp/kubeconfig /tmp/manifests-staging.yaml
+
+  deploy-prod:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Kustomize
+      run: |
+        curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+        sudo mv kustomize /usr/local/bin/
+    - name: Prepare manifests
+      run: |
+        kustomize build k8s/overlays/prod > /tmp/manifests-prod.yaml
+    - name: Deploy to production
+      env:
+        KUBECONFIG: ${{ secrets.KUBECONFIG_PROD }}
+      run: |
+        echo "$KUBECONFIG" > /tmp/kubeconfig
+        kubectl apply -f /tmp/manifests-prod.yaml --kubeconfig=/tmp/kubeconfig
+        rm -f /tmp/kubeconfig /tmp/manifests-prod.yaml

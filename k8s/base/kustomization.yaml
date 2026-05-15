@@ -1,0 +1,54 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rag-system
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/part-of: k8s-qa-rag-agent
+  app.kubernetes.io/managed-by: kustomize
+
+# Resources included in this base
+resources:
+  - namespace.yaml
+  - configmap-otel.yaml
+  - elasticsearch-deployment.yaml
+  - redis-deployment.yaml
+  - qdrant-statefulset.yaml
+  - qdrant-service.yaml
+  - indexer-batch-configmap.yaml
+  - indexer-deployment.yaml
+  - indexer-service.yaml
+  - qa-agent-deployment.yaml
+  - retriever-deployment.yaml
+  - git-watcher-deployment.yaml
+  - indexer-cronjob.yaml
+
+# Common images for all services (can be patched by overlays)
+images:
+  - name: qa-agent
+    newName: qa-agent
+    newTag: latest
+  - name: retriever
+    newName: retriever
+    newTag: latest
+  - name: indexer
+    newName: indexer
+    newTag: latest
+  - name: git-watcher
+    newName: git-watcher
+    newTag: latest
+  - name: qdrant
+    newName: qdrant/qdrant
+    newTag: latest
+
+# Replicas configuration (base values, can be patched)
+replicas:
+  - name: qa-agent-deployment
+    count: 1
+  - name: retriever-deployment
+    count: 1
+  - name: indexer-deployment
+    count: 1
+  - name: git-watcher-deployment
+    count: 1

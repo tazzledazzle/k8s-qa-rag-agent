@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "project_code": "K8S-QA-RAG",
+  "mode": "yolo",
+  "granularity": "standard",
+  "parallelization": true,
+  "commit_docs": true,
+  "model_profile": "balanced",
+  "workflow": {
+    "research": true,
+    "plan_check": true,
+    "verifier": true,
+    "nyquist_validation": true,
+    "auto_advance": false,
+    "research_before_questions": false
+  },
+  "planning": {
+    "sub_repos": [],
+    "project_path": "."
+  },
+  "_notes": "Initialized via /gsd/new-project; gsd-sdk unavailable — config written manually."
+}

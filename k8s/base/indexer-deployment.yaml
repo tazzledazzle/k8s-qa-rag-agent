@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: indexer-deployment
+  labels:
+    app: indexer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: indexer
+  template:
+    metadata:
+      labels:
+        app: indexer
+    spec:
+      containers:
+      - name: indexer
+        image: indexer:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8000
+        env:
+        - name: QDRANT_HOST
+          value: "qdrant-service"
+        - name: QDRANT_PORT
+          value: "6333"
+        - name: ELASTICSEARCH_URL
+          value: "http://elasticsearch:9200"
+        volumeMounts:
+        - name: repo-cache
+          mountPath: /app/repos
+        resources:
+          requests:
+            cpu: 2000m
+            memory: 4Gi
+          limits:
+            cpu: 4000m
+            memory: 8Gi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: repo-cache
+        persistentVolumeClaim:
+          claimName: indexer-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: indexer-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi

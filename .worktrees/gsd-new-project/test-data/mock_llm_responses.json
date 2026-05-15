@@ -1,0 +1,8 @@
+{
+  "description": "Canned responses for mock LLM in tests",
+  "responses": [
+    "Echo: hello",
+    "Hello back",
+    "[stub search result for: test query]"
+  ]
+}

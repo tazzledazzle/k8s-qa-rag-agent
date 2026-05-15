@@ -1,0 +1,5 @@
+docs
+htmlcov
+k8s
+services
+tests

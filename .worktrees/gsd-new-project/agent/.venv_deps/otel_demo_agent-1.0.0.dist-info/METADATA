@@ -1,0 +1,30 @@
+Metadata-Version: 2.4
+Name: otel-demo-agent
+Version: 1.0.0
+Summary: Python agent service (LangChain + Ollama) for OTel demo platform
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: langchain-core>=0.3.0
+Requires-Dist: langchain-ollama>=0.2.0
+Requires-Dist: langchain>=0.3.0
+Requires-Dist: opentelemetry-api>=1.27.0
+Requires-Dist: opentelemetry-exporter-otlp-proto-grpc>=1.27.0
+Requires-Dist: opentelemetry-instrumentation-fastapi>=0.49b0
+Requires-Dist: opentelemetry-sdk>=1.27.0
+Requires-Dist: uvicorn[standard]>=0.32.0
+Provides-Extra: dev
+Requires-Dist: httpx>=0.27.0; extra == 'dev'
+Requires-Dist: pytest-asyncio>=0.24.0; extra == 'dev'
+Requires-Dist: pytest>=8.0.0; extra == 'dev'
+Description-Content-Type: text/markdown
+
+# Agent service (Python)
+
+LangChain + Ollama agent; exposes `POST /invoke`. Run after starting Ollama and pulling a model (e.g. `ollama pull llama3.2`).
+
+```bash
+pip install -e ".[dev]"
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 python -m agent.main
+```
+
+Default: http://localhost:8000. Full config reference: [CONFIG.md](../CONFIG.md). Set `AGENT_PORT`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL` as needed.

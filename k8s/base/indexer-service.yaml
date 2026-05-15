@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: indexer-service
+  labels:
+    app: indexer
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+  selector:
+    app: indexer

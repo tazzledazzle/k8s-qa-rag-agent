@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: indexer-batch-config
+  labels:
+    app: indexer
+data:
+  # Override in overlays or patch before production use.
+  INDEX_REPO_URL: "https://github.com/octocat/Hello-World"
+  INDEX_BRANCH: "master"

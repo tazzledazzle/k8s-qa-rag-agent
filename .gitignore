@@ -1,0 +1,17 @@
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Kotlin / Gradle
+**/build/
+**/.gradle/
+
+# Phase 1 fixture — created by tests/fixtures/sample-repo/bootstrap.sh
+tests/fixtures/sample-repo/.git/

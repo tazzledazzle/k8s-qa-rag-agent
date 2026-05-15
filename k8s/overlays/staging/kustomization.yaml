@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rag-system
+
+bases:
+  - ../../base
+
+namePrefix: staging-
+
+commonLabels:
+  environment: staging
+
+# Override replicas for staging
+replicas:
+  - name: staging-qa-agent-deployment
+    count: 2
+  - name: staging-retriever-deployment
+    count: 2
+  - name: staging-indexer-deployment
+    count: 1
+  - name: staging-git-watcher-deployment
+    count: 1
+  - name: staging-qdrant
+    count: 1
+
+# Add HPA for qa-agent
+resources:
+  - hpa-qa-agent.yaml

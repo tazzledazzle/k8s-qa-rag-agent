@@ -1,0 +1,121 @@
+# CI: unit tests (API, Worker, Agent) + e2e smoke (health + POST /chat).
+# E2E smoke requires Docker; POST /chat may fail in CI without Ollama (agent/LLM).
+# Health checks must pass; POST /chat failure is acceptable when Ollama is not available.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Kotlin unit tests
+        run: ./gradlew :api:test :worker:test --no-daemon
+
+      - name: Agent unit tests
+        run: |
+          cd agent
+          pip install -e ".[dev]"
+          python -m pytest tests/ -v
+
+  e2e-smoke:
+    name: E2E smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Start infrastructure
+        run: docker compose up -d
+
+      - name: Wait for infra
+        run: sleep 20
+
+      - name: Install agent deps
+        run: |
+          cd agent
+          pip install -e ".[dev]"
+
+      - name: Start Agent (background)
+        run: (cd agent && python -m agent.main > ../.agent.log 2>&1) &
+        env:
+          AGENT_PORT: "8000"
+          AGENT_LLM_OFF: "1"
+
+      - name: Wait for Agent
+        run: sleep 8
+
+      - name: Start Worker (background)
+        run: ./gradlew :worker:run --no-daemon > .worker.log 2>&1 &
+
+      - name: Wait for Worker
+        run: sleep 10
+
+      - name: Start API (background)
+        run: ./gradlew :api:run --no-daemon > .api.log 2>&1 &
+
+      - name: Wait for API
+        run: sleep 8
+
+      - name: Health check (API)
+        run: |
+          curl -sf http://localhost:8080/health | grep -q "ok" || (echo "API health failed"; exit 1)
+          echo "API health OK"
+
+      - name: Health check (Agent)
+        run: |
+          curl -sf http://localhost:8000/health | grep -q "ok" || (echo "Agent health failed"; exit 1)
+          echo "Agent health OK"
+
+      - name: POST /chat (optional without Ollama)
+        id: chat
+        continue-on-error: true
+        run: |
+          out=$(curl -sf -X POST http://localhost:8080/chat -H "Content-Type: application/json" -d '{"message":"Hello"}')
+          if echo "$out" | grep -q '"reply"'; then
+            echo "POST /chat OK (reply present)"
+          else
+            echo "POST /chat failed or no reply (Ollama/agent may be unavailable in CI)"
+            echo "Output: $out"
+            exit 1
+          fi
+
+      - name: E2E summary
+        if: always()
+        run: |
+          if [ "${{ steps.chat.outcome }}" == "failure" ]; then
+            echo "::notice title=E2E POST /chat::POST /chat failed. This is acceptable in CI without Ollama. Add Ollama or a mock for full smoke."
+          fi
