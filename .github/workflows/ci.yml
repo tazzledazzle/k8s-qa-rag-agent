@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: tests/
+        working-directory: ./
     strategy:
       matrix:
-        python-version: ['3.10']
+        python-version: ['3.13']
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-python@v4
