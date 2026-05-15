@@ -18,16 +18,16 @@ data:
         timeout: 10s
 
     exporters:
-      logging:
-        loglevel: info
+      debug:
+        verbosity: detailed
 
     service:
       pipelines:
         traces:
           receivers: [otlp]
           processors: [batch]
-          exporters: [logging]
+          exporters: [debug]
         metrics:
           receivers: [otlp]
           processors: [batch]
-          exporters: [logging]
+          exporters: [debug]
