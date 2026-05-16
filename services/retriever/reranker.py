@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 
-from sentence_transformers import CrossEncoder
+from sentence_transformers import CrossEncoder  # type: ignore[import-not-found]
 
 from .models import ChunkHit
 

@@ -16,12 +16,12 @@ try:
     from pythonjsonlogger.json import JsonFormatter
 except ImportError:
     from pythonjsonlogger.jsonlogger import JsonFormatter  # type: ignore[no-redef]
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.types import ASGIApp
+from starlette.middleware.base import BaseHTTPMiddleware  # type: ignore[import-not-found]
+from starlette.requests import Request  # type: ignore[import-not-found]
+from starlette.types import ASGIApp  # type: ignore[import-not-found]
 
 if TYPE_CHECKING:
-    from fastapi import FastAPI
+    from fastapi import FastAPI  # type: ignore[import-not-found]
 
 correlation_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "correlation_id", default=None
@@ -66,7 +66,7 @@ def configure_json_logging() -> None:
 def shutdown_otel() -> None:
     """Flush OTLP spans on process exit."""
     try:
-        from opentelemetry import trace
+        from opentelemetry import trace  # type: ignore[import-not-found]
 
         provider = trace.get_tracer_provider()
         if hasattr(provider, "force_flush"):
@@ -90,13 +90,13 @@ def init_otel_fastapi(app: object, service_name: str) -> None:
     if not endpoint:
         return
     try:
-        from opentelemetry import trace
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.trace import Span
+        from opentelemetry import trace  # type: ignore[import-not-found]
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter  # type: ignore[import-not-found]
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # type: ignore[import-not-found]
+        from opentelemetry.sdk.resources import Resource  # type: ignore[import-not-found]
+        from opentelemetry.sdk.trace import TracerProvider  # type: ignore[import-not-found]
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore[import-not-found]
+        from opentelemetry.trace import Span  # type: ignore[import-not-found]
     except ImportError:
         logging.getLogger(__name__).warning("OpenTelemetry packages not available; skipping OTEL")
         return

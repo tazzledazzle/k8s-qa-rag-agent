@@ -6,8 +6,8 @@ import logging
 import os
 from typing import Any
 
-from qdrant_client import QdrantClient
-from qdrant_client.http import models as qm
+from qdrant_client import QdrantClient  # type: ignore[import-not-found]
+from qdrant_client.http import models as qm  # type: ignore[import-not-found]
 
 logger = logging.getLogger(__name__)
 

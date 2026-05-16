@@ -8,7 +8,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException  # type: ignore[import-not-found]
 
 from .chunker import ChunkingError, chunk_file
 from .embeddings import EmbeddingsError, EmbeddingsGenerator

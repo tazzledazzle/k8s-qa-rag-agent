@@ -8,8 +8,8 @@ import os
 from collections.abc import Sequence
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langgraph.prebuilt import create_react_agent
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # type: ignore[import-not-found]
+from langgraph.prebuilt import create_react_agent  # type: ignore[import-not-found]
 
 from .llm import get_chat_model
 from .models import AskResponse, Citation

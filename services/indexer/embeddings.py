@@ -2,9 +2,9 @@
 
 import logging
 from typing import Optional
-import numpy as np
+import numpy as np  # type: ignore[import-not-found]
 
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
 
 logger = logging.getLogger(__name__)
 

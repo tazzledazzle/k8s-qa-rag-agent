@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 import os
 
-from qdrant_client import QdrantClient
-from sentence_transformers import SentenceTransformer
+from qdrant_client import QdrantClient  # type: ignore[import-not-found]
+from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
 
 from .models import ChunkHit
 

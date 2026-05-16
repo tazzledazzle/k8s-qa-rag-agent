@@ -6,7 +6,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI  # type: ignore[import-not-found]
 from rapidfuzz import fuzz
 
 from services.common.observability import (

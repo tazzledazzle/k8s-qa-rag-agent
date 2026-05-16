@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 
-from langchain_openai import ChatOpenAI
-from pydantic import SecretStr
+from langchain_openai import ChatOpenAI  # type: ignore[import-not-found]
+from pydantic import SecretStr  # type: ignore[import-not-found]
 
 
 def get_chat_model() -> ChatOpenAI:

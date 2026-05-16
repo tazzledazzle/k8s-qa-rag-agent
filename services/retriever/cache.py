@@ -7,7 +7,7 @@ import json
 import logging
 import os
 
-import redis
+import redis  # type: ignore[import-not-found]
 
 from .models import ChunkHit, SearchResponse
 

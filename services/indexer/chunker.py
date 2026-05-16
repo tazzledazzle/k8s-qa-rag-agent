@@ -57,7 +57,7 @@ def _try_parse_python(content: str) -> Optional[list[tuple[int, int, str]]]:
         List of (start_line, end_line, text) tuples, or None if parsing fails.
     """
     try:
-        import tree_sitter as ts
+        import tree_sitter as ts  # type: ignore[import-not-found]
         from tree_sitter import Language, Parser
     except ImportError:
         logger.debug("tree-sitter not available; falling back to token-window chunking")

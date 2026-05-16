@@ -6,8 +6,8 @@ import logging
 import os
 from typing import Any
 
-from elasticsearch import Elasticsearch
-from elasticsearch.helpers import bulk
+from elasticsearch import Elasticsearch  # type: ignore[import-not-found]
+from elasticsearch.helpers import bulk  # type: ignore[import-not-found]
 
 logger = logging.getLogger(__name__)
 

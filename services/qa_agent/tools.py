@@ -7,7 +7,7 @@ import os
 from typing import Any, cast
 
 import httpx
-from langchain_core.tools import tool
+from langchain_core.tools import tool  # type: ignore[import-not-found]
 
 from services.common.observability import CORRELATION_HEADER, correlation_id_var
 

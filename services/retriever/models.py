@@ -1,6 +1,6 @@
 """Pydantic models for the retriever API."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field  # type: ignore[import-not-found]
 
 
 class SearchRequest(BaseModel):

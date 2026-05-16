@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch  # type: ignore[import-not-found]
 
 from .models import ChunkHit
 
