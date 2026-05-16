@@ -1,12 +1,21 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 
 plugins {
-    kotlin("jvm") version "1.9.25"
-    kotlin("plugin.serialization") version "1.9.25"
+    kotlin("jvm") version "2.3.21"
+    kotlin("plugin.serialization") version "2.3.21"
     application
-    id("com.github.johnrengelman.shadow") version "8.1.1"
+    id("com.gradleup.shadow") version "9.4.1"
+}
+kotlin {
+    jvmToolchain(25)
 }
 
+
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.fromTarget("25"))
+    }
+}
 group = "com.k8sqarag"
 version = "0.1.0"
 
@@ -26,16 +35,15 @@ dependencies {
     implementation("io.ktor:ktor-client-content-negotiation")
     testImplementation("io.ktor:ktor-server-tests")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5:1.9.25")
+    // ... your existing deps ...
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher") // ADD THIS
 }
 
 application {
     mainClass.set("com.k8sqarag.gitwatcher.GitWatcherAppKt")
 }
 
-kotlin {
-    jvmToolchain(21)
-}
 
 tasks.named<ShadowJar>("shadowJar") {
     archiveFileName.set("app.jar")
@@ -46,6 +54,6 @@ tasks.build {
     dependsOn(tasks.shadowJar)
 }
 
-tasks.withType<Test>().configureEach {
+tasks.withType<Test>() {
     useJUnitPlatform()
 }
